@@ -1,21 +1,14 @@
+use std::env::temp_dir;
+
 use sfml::{
     graphics::{PrimitiveType, Vertex, VertexBuffer, VertexBufferUsage},
-    system::{Vector2, Vector2u},
     window::mouse,
 };
 
-use {
-    rand::{thread_rng, Rng},
-    sfml::{
-        audio::{Sound, SoundBuffer, SoundSource},
-        graphics::{
-            CircleShape, Color, Font, RectangleShape, RenderTarget, RenderWindow, Shape, Text,
-            Transformable,
-        },
-        system::{Clock, Time, Vector2f},
-        window::{ContextSettings, Event, Key, Style},
-    },
-    std::{env, f32::consts::PI},
+use sfml::{
+    graphics::{CircleShape, Color, RenderTarget, RenderWindow, Shape, Transformable},
+    system::Vector2f,
+    window::{ContextSettings, Event, Key, Style},
 };
 
 const APP_WIDTH: u32 = 600;
@@ -105,7 +98,7 @@ fn main() {
         }
 
         if !turn {
-            let (x, y) = ai_choose(board.clone());
+            let (x, y, ai_grid) = ai_choose(board.clone());
             board[y][x] = Some(BoardSpot::Black);
             turn = !turn;
         }
@@ -134,11 +127,143 @@ fn main() {
     }
 }
 
+#[derive(Default, Clone, Copy)]
 struct ChoosingCell {
     attack: u8,
     defense: u8,
 }
 
-fn ai_choose(board: [[Option<BoardSpot>; 20]; 20]) -> (usize, usize) {
-    (0, 0)
+#[derive(Clone, Copy)]
+enum Mode {
+    Attacking,
+    Defending,
+}
+
+type DebugGrid = [[ChoosingCell; 20]; 20];
+
+fn ai_choose(board: [[Option<BoardSpot>; 20]; 20]) -> (usize, usize, DebugGrid) {
+    let mut ai_grid: DebugGrid = [[ChoosingCell {
+        attack: 0,
+        defense: 0,
+    }; 20]; 20];
+    let mut tmp_grid = board;
+
+    for g_y in 0..GRID_SIZE as usize {
+        for g_x in 0..GRID_SIZE as usize {
+            if let None = tmp_grid[g_y][g_x] {
+                for off_y in [-1, 1] {
+                    for off_x in [-1, 1] {
+                        let mut x = g_x as i32 + off_x;
+                        let mut y = g_y as i32 + off_y;
+                        let mut att = 0;
+                        let mut def = 0;
+
+                        if is_inbound(x, y) {
+                            if let Some(spot) = tmp_grid[y as usize][x as usize] {
+                                let mode = match spot {
+                                    BoardSpot::Black => {
+                                        att += 10;
+                                        Mode::Attacking
+                                    }
+                                    BoardSpot::White => {
+                                        def += 10;
+                                        Mode::Defending
+                                    }
+                                };
+
+                                loop {
+                                    x += off_x;
+                                    y += off_y;
+
+                                    if is_inbound(x, y) {
+                                        if let Some(other_spot) = tmp_grid[y as usize][x as usize] {
+                                            match (other_spot, mode) {
+                                                (BoardSpot::Black, Mode::Attacking) => {
+                                                    att += 10;
+                                                    continue;
+                                                }
+                                                (BoardSpot::Black, Mode::Defending) => {
+                                                    def /= 2;
+                                                    break;
+                                                }
+                                                (BoardSpot::White, Mode::Attacking) => {
+                                                    att /= 2;
+                                                    break;
+                                                }
+                                                (BoardSpot::White, Mode::Defending) => {
+                                                    def += 10;
+                                                    println!(
+                                                        "!!!!x: {x} y: {y}\tatt: {att} def: {def}"
+                                                    );
+                                                    continue;
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        def /= 2;
+                                        att /= 2;
+                                        x -= off_x;
+                                        y -= off_y;
+                                    }
+
+                                    break;
+                                }
+                                // TODO: make it add to existing choosing cells
+                                println!("x: {x} y: {y}\tatt: {att} def: {def}");
+                                ai_grid[y as usize][x as usize] = ChoosingCell {
+                                    attack: att,
+                                    defense: def,
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct PosValue {
+        x: usize,
+        y: usize,
+        val: u8,
+    }
+
+    let mut highest_att = PosValue::default();
+    let mut highest_def = PosValue::default();
+
+    for ai_y in 0..GRID_SIZE as usize {
+        for ai_x in 0..GRID_SIZE as usize {
+            let choosing_cell = ai_grid[ai_y][ai_x];
+
+            if choosing_cell.attack > highest_att.val {
+                highest_att = PosValue {
+                    x: ai_x,
+                    y: ai_y,
+                    val: choosing_cell.attack,
+                }
+            }
+
+            if choosing_cell.defense > highest_def.val {
+                highest_def = PosValue {
+                    x: ai_x,
+                    y: ai_y,
+                    val: choosing_cell.defense,
+                }
+            }
+        }
+    }
+    println!("----------------");
+
+    if highest_att.val >= 40 || highest_att.val > highest_def.val {
+        return (highest_att.x, highest_att.y, ai_grid);
+    } else if highest_def.val >= 40 || highest_def.val > highest_att.val {
+        return (highest_def.x, highest_def.y, ai_grid);
+    }
+
+    (highest_att.x, highest_att.y, ai_grid)
+}
+
+fn is_inbound(x: i32, y: i32) -> bool {
+    x >= 0 && x < GRID_SIZE as i32 && y >= 0 && y < GRID_SIZE as i32
 }
